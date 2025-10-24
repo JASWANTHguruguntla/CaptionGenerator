@@ -3,13 +3,8 @@ import { CaptionResult, Hashtag } from '../types';
 
 const API_KEY = process.env.API_KEY;
 
-if (!API_KEY) {
-  throw new Error("API_KEY environment variable is not set.");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
-
-const model = 'gemini-2.5-flash';
+// Initialize the AI client only if the API key exists.
+const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
 
 const getPlatformInstructions = (platform: string) => {
     switch(platform) {
@@ -74,6 +69,11 @@ const schema = {
 
 
 export const generateCaptionForImage = async (imageBase64: string, mimeType: string, tone: string, platform: string): Promise<CaptionResult> => {
+  // Check for the AI client's existence before making a call.
+  if (!ai) {
+    throw new Error("AI client is not initialized. Please set the API_KEY environment variable in your Vercel project settings.");
+  }
+  
   try {
     const imagePart = {
       inlineData: {
@@ -87,7 +87,7 @@ export const generateCaptionForImage = async (imageBase64: string, mimeType: str
     };
 
     const response = await ai.models.generateContent({
-        model: model,
+        model: 'gemini-2.5-flash',
         contents: { parts: [imagePart, textPart] },
         config: {
           responseMimeType: "application/json",
