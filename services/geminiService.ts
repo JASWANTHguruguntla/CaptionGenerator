@@ -1,11 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { CaptionResult, Hashtag } from '../types';
 
-const API_KEY = process.env.API_KEY;
-
-// Initialize the AI client only if the API key exists.
-const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
-
 const getPlatformInstructions = (platform: string) => {
     switch(platform) {
       case 'X':
@@ -69,10 +64,14 @@ const schema = {
 
 
 export const generateCaptionForImage = async (imageBase64: string, mimeType: string, tone: string, platform: string): Promise<CaptionResult> => {
+  const API_KEY = process.env.API_KEY;
+
   // Check for the AI client's existence before making a call.
-  if (!ai) {
+  if (!API_KEY) {
     throw new Error("AI client is not initialized. Please set the API_KEY environment variable in your Vercel project settings.");
   }
+  
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
   
   try {
     const imagePart = {
