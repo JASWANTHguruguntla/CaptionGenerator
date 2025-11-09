@@ -64,7 +64,7 @@ const schema = {
 
 
 export const generateCaptionForImage = async (imageBase64: string, mimeType: string, tone: string, platform: string): Promise<CaptionResult> => {
-  const API_KEY = "AIzaSyBqnw9YMcAymOn4H3fmTOw4qPq6iPm3vzQ";
+  const API_KEY = process.env.API_KEY;
 
   // Check for the AI client's existence before making a call.
   if (!API_KEY) {
