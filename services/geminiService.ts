@@ -4,31 +4,32 @@ import { CaptionResult, Hashtag } from "../types";
 const getPlatformInstructions = (platform: string) => {
   switch (platform) {
     case "X":
-      return 'For X (Twitter), the "title" caption must be under 280 characters.';
+      return 'For X (Twitter), captions must be under 280 characters and concise.';
     case "Facebook":
-      return 'For Facebook, focus on community engagement.';
+      return 'For Facebook, captions should encourage engagement and sharing.';
     case "LinkedIn":
-      return 'For LinkedIn, maintain a professional tone and offer insights.';
+      return 'For LinkedIn, maintain a professional tone, add insights or questions.';
     case "Instagram":
     default:
-      return 'For Instagram, captions should be visually descriptive and engaging.';
+      return 'For Instagram, captions should be visual, fun, and engaging.';
   }
 };
 
 const generatePrompt = (tone: string, platform: string) => `
-You are a creative social media expert specializing in ${platform}. 
-Your task is to generate three vivid captions for the given image, with a ${tone} tone.
+You are a creative social media expert for ${platform}.
+Generate 3 captions for an image with a ${tone} tone.
 
 Platform Guidelines: ${getPlatformInstructions(platform)}
 
-General Instructions:
-1. Generate three distinct captions:
-   - "title": short and punchy
-   - "medium": engaging and 1–2 sentences
-   - "large": story-style with 3–4 sentences
-2. Use natural emojis.
-3. Suggest 5–7 hashtags with a "category" field (general, niche, trending, or location).
-4. Output valid JSON only.
+Each caption type:
+1. "titleCaption" – short, catchy, 1 line with emojis.
+2. "mediumCaption" – engaging 1–2 sentence caption.
+3. "largeCaption" – storytelling style, 3–4 sentences.
+
+Also provide 5–7 hashtags, each with:
+{ "tag": string, "category": "general" | "niche" | "location" | "trending" }
+
+Respond **only in valid JSON** matching the schema.
 `;
 
 const schema = {
@@ -60,10 +61,12 @@ export const generateCaptionForImage = async (
 ): Promise<CaptionResult> => {
   const API_KEY = import.meta.env.VITE_API_KEY;
   if (!API_KEY)
-    throw new Error("VITE_API_KEY not found. Please set it in Vercel.");
+    throw new Error("VITE_API_KEY not found. Please set it in your Vercel settings.");
 
   const ai = new GoogleGenerativeAI(API_KEY);
-  const modelNames = ["gemini-2.5-flash-lite", "gemini-1.5-flash"]; // fallback order
+
+  // 🧠 Fallback model sequence
+  const modelNames = ["gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-1.0-pro"];
 
   const imagePart = { inlineData: { data: imageBase64, mimeType } };
   const textPart = { text: generatePrompt(tone, platform) };
@@ -71,7 +74,6 @@ export const generateCaptionForImage = async (
   for (const modelName of modelNames) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        console.log(`Attempt ${attempt} with model ${modelName}`);
         const model = ai.getGenerativeModel({
           model: modelName,
           generationConfig: {
@@ -80,12 +82,15 @@ export const generateCaptionForImage = async (
           },
         });
 
+        console.log(`⚙️ Using model: ${modelName} (Attempt ${attempt})`);
+
         const response = await model.generateContent({
           contents: [{ role: "user", parts: [textPart, imagePart] }],
         });
 
         const text = response.response.text();
         if (!text) throw new Error("Empty response from AI model.");
+
         const parsed = JSON.parse(text);
 
         const validatedHashtags = Array.isArray(parsed.hashtags)
@@ -102,28 +107,28 @@ export const generateCaptionForImage = async (
 
         return {
           titleCaption: parsed.titleCaption || "No title caption generated.",
-          mediumCaption:
-            parsed.mediumCaption || "No medium caption generated.",
+          mediumCaption: parsed.mediumCaption || "No medium caption generated.",
           largeCaption: parsed.largeCaption || "No large caption generated.",
           hashtags: validatedHashtags,
         };
       } catch (err: any) {
-        if (err?.status === "UNAVAILABLE" && attempt < 3) {
-          console.warn(`Model overloaded, retrying in 3s... (${attempt}/3)`);
+        // Retry and fallback logic
+        if (err?.status === "UNAVAILABLE" || err?.code === 503) {
+          console.warn(
+            `🚧 Model ${modelName} overloaded. Retrying (${attempt}/3)...`
+          );
           await new Promise((res) => setTimeout(res, 3000));
+          if (attempt === 3) {
+            console.warn(`⚠️ Switching to fallback model after ${modelName}`);
+            break;
+          }
           continue;
         }
-        if (attempt === 3 && modelName !== modelNames.at(-1)) {
-          console.warn(`Switching to fallback model: ${modelNames[1]}`);
-          break;
-        }
-        if (attempt === 3) {
-          console.error("Error generating caption:", err);
-          throw err;
-        }
+
+        if (modelName === modelNames.at(-1)) throw err;
       }
     }
   }
 
-  throw new Error("All models failed after retries.");
+  throw new Error("All models unavailable. Please try again later.");
 };
