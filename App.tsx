@@ -2,7 +2,6 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { CaptionResult, HistoryItem } from './types';
 import { generateCaptionForImage } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
-import { resizeFileToDataUrl, generateThumbnailDataUrl } from './utils/imageUtils';
 import ImageUploader from './components/ImageUploader';
 import ResultDisplay from './components/ResultDisplay';
 import HistoryPanel from './components/HistoryPanel';
@@ -11,66 +10,47 @@ import { SpinnerIcon } from './components/icons/SpinnerIcon';
 import { RefreshIcon } from './components/icons/RefreshIcon';
 import { HistoryIcon } from './components/icons/HistoryIcon';
 
-// safe storage helpers
-import { loadHistory, saveHistory, clearHistory } from './utils/storage';
-
 const App: React.FC = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
-  // displayUrl is an object URL (not base64) to avoid large strings in memory
-  const [displayUrl, setDisplayUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [captionResult, setCaptionResult] = useState<CaptionResult | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [tone, setTone] = useState('Creative');
   const [platform, setPlatform] = useState('Instagram');
 
   useEffect(() => {
-    const stored = loadHistory();
-    setHistory(stored);
+    try {
+      const storedHistory = localStorage.getItem('captionHistory');
+      if (storedHistory) {
+        setHistory(JSON.parse(storedHistory));
+      }
+    } catch (e) {
+      console.error("Failed to parse history from localStorage", e);
+      setHistory([]);
+    }
   }, []);
 
   useEffect(() => {
-    try {
-      saveHistory(history);
-    } catch (err) {
-      console.error('Error while saving history (caught in App):', err);
-    }
+    localStorage.setItem('captionHistory', JSON.stringify(history));
   }, [history]);
 
-  // Clean up object URL when component unmounts or displayUrl changes
-  useEffect(() => {
-    return () => {
-      if (displayUrl && displayUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(displayUrl);
-      }
+  const handleImageSelect = (file: File) => {
+    setImageFile(file);
+    setCaptionResult(null);
+    setError(null);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setImageUrl(reader.result as string);
     };
-  }, [displayUrl]);
-
-  const handleImageSelect = async (file: File) => {
-    try {
-      setImageFile(file);
-      setCaptionResult(null);
-      setError(null);
-
-      // Use object URL for display (efficient)
-      const url = URL.createObjectURL(file);
-      // revoke previous
-      if (displayUrl && displayUrl.startsWith('blob:')) {
-        try { URL.revokeObjectURL(displayUrl); } catch {}
-      }
-      setDisplayUrl(url);
-    } catch (err) {
-      console.error('handleImageSelect error', err);
-      setError('Failed to prepare selected image.');
-    }
+    reader.readAsDataURL(file);
   };
 
   const handleGenerateCaption = useCallback(async () => {
-    if (!imageFile) {
-      setError('Please select an image first.');
+    if (!imageFile || !imageUrl) {
+      setError("Please select an image first.");
       return;
     }
 
@@ -78,52 +58,33 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      // 1) Resize for API to limit upload size (e.g., max 1024)
-      const resizedForApi = await resizeFileToDataUrl(imageFile, 1024, 0.8);
-
-      // 2) Generate a small thumbnail to store in history (e.g., 200px)
-      const thumb = await generateThumbnailDataUrl(imageFile, 200, 0.6);
-
-      // 3) Use the resizedForApi (base64) to call the model
-      const result = await generateCaptionForImage(resizedForApi.replace(/^data:image\/[^;]+;base64,/, ''), 'image/jpeg', tone, platform);
-      // Note: If your generateCaptionForImage expects base64-without-dataurl, adapt as above.
+      const base64Image = await fileToBase64(imageFile);
+      const result = await generateCaptionForImage(base64Image, imageFile.type, tone, platform);
       setCaptionResult(result);
-
-      const newEntry: HistoryItem = {
-        id: new Date().toISOString(),
-        imageUrl: thumb, // store only a small thumbnail
-        result,
-      };
-
-      setHistory(prev => [newEntry, ...prev].slice(0, 50)); // keep in-memory bounded
+      setHistory(prevHistory => [{ id: new Date().toISOString(), imageUrl, result }, ...prevHistory]);
     } catch (err: unknown) {
-      console.error('generate error', err);
-      setError(err instanceof Error ? err.message : 'An unknown error occurred while generating captions.');
+      setError(err instanceof Error ? err.message : "An unknown error occurred.");
     } finally {
       setIsLoading(false);
     }
-  }, [imageFile, tone, platform]);
-
+  }, [imageFile, imageUrl, tone, platform]);
+  
   const handleReset = () => {
     setImageFile(null);
-    if (displayUrl && displayUrl.startsWith('blob:')) {
-      try { URL.revokeObjectURL(displayUrl); } catch {}
-    }
-    setDisplayUrl(null);
+    setImageUrl(null);
     setCaptionResult(null);
     setError(null);
   };
 
   const handleSelectHistoryItem = (item: HistoryItem) => {
-    setDisplayUrl(item.imageUrl || null);
+    setImageUrl(item.imageUrl);
     setCaptionResult(item.result);
-    setImageFile(null);
+    setImageFile(null); 
     setIsHistoryOpen(false);
   };
 
   const handleClearHistory = () => {
     setHistory([]);
-    try { clearHistory(); } catch (err) { console.error('clearHistory error', err); }
   };
 
   const buttonText = isLoading ? 'Generating...' : (captionResult ? 'Regenerate Captions' : 'Generate Captions');
@@ -131,29 +92,73 @@ const App: React.FC = () => {
 
   return (
     <>
-      <div className="min-h-screen ...">
-        <main className="w-full max-w-2xl mx-auto ...">
-          <header> ... </header>
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/50 to-gray-900 flex flex-col items-center p-4 sm:p-6 md:p-8">
+        <main className="w-full max-w-2xl mx-auto flex flex-col items-center text-center">
+          <header className="w-full mb-8 relative">
+            <h1 className="text-4xl sm:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500 mb-2">
+              AI Caption Generator
+            </h1>
+            <p className="text-lg text-slate-400">
+              Craft the perfect post in seconds.
+            </p>
+            <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="absolute top-0 right-0 flex items-center gap-2 text-sm text-slate-400 hover:text-purple-400 transition-colors"
+                aria-label="View history"
+            >
+                <HistoryIcon className="w-5 h-5" />
+            </button>
+          </header>
 
-          <div className="w-full ...">
-            <ImageUploader onImageSelect={handleImageSelect} imageUrl={displayUrl} isLoading={isLoading} />
+          <div className="w-full bg-gray-800/30 rounded-xl shadow-lg p-6 backdrop-blur-sm border border-gray-700">
+            <ImageUploader onImageSelect={handleImageSelect} imageUrl={imageUrl} isLoading={isLoading} />
+            
+            <Controls 
+              tone={tone}
+              setTone={setTone}
+              platform={platform}
+              setPlatform={setPlatform}
+              disabled={isLoading}
+            />
 
-            <Controls ... />
-
-            <button onClick={handleGenerateCaption} disabled={!imageFile || isLoading} className="...">
-              {isLoading && <SpinnerIcon />}
-              {!isLoading && showRegenerateIcon && <RefreshIcon />}
+            <button
+              onClick={handleGenerateCaption}
+              disabled={!imageFile || isLoading}
+              className="mt-6 w-full flex justify-center items-center gap-3 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500"
+            >
+              {isLoading && <SpinnerIcon className="w-5 h-5" />}
+              {showRegenerateIcon && <RefreshIcon className="w-5 h-5" />}
               {buttonText}
             </button>
-
-            {error && <div className="mt-4 p-3 rounded bg-red-700 text-white"><strong>Error:</strong> {error}</div>}
           </div>
+
+          {error && (
+            <div className="mt-6 w-full bg-red-900/50 border border-red-700 text-red-300 px-4 py-3 rounded-lg" role="alert">
+              <strong className="font-bold">Error: </strong>
+              <span className="block sm:inline">{error}</span>
+            </div>
+          )}
+          
+          <ResultDisplay result={captionResult} isLoading={isLoading} />
+
+          {captionResult && !isLoading && (
+             <button
+              onClick={handleReset}
+              className="mt-6 flex justify-center items-center gap-3 bg-pink-600 hover:bg-pink-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-pink-500"
+            >
+              Generate for Another Image
+            </button>
+          )}
+
         </main>
-
-        <HistoryPanel isOpen={isHistoryOpen} history={history} onClose={() => setIsHistoryOpen(false)} onSelect={handleSelectHistoryItem} onClear={handleClearHistory} />
       </div>
-
-      <ResultDisplay result={captionResult} isLoading={isLoading} />
+      <HistoryPanel 
+        isOpen={isHistoryOpen}
+        history={history}
+        onSelect={handleSelectHistoryItem}
+        onClear={handleClearHistory}
+        onClose={() => setIsHistoryOpen(false)}
+      />
     </>
   );
 };
