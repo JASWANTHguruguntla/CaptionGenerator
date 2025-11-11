@@ -1,79 +1,77 @@
-// safe storage helpers for captionHistory
-import { HistoryItem } from '../types';
+// Safe storage helpers for captionHistory
+import { HistoryItem } from "../types";
 
-const STORAGE_KEY = 'captionHistory';
+const STORAGE_KEY = "captionHistory";
 const MAX_HISTORY_ITEMS = 10;
 
 /**
- * Load history from localStorage with safe parsing.
+ * Load history from localStorage or fallback to sessionStorage.
  */
 export function loadHistory(): HistoryItem[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ||
+      sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as HistoryItem[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
-    console.error('Failed to load captionHistory from localStorage', err);
+    console.error("Failed to load captionHistory", err);
     return [];
   }
 }
 
 /**
- * Save history with quota-aware fallback:
- *  - Try to save full history
- *  - If quota exceeded, remove imageUrl from older items and retry
- *  - If still failing, trim to MAX_HISTORY_ITEMS and retry
+ * Save history with strong quota handling and automatic cleanup.
  */
 export function saveHistory(history: HistoryItem[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-    return;
-  } catch (err: unknown) {
-    // If quota exceeded, try to salvage things
-    console.warn('Initial localStorage.setItem failed, attempting to reduce payload', err);
+    // Always keep only the most recent items
+    const trimmed = history.slice(-MAX_HISTORY_ITEMS);
 
-    try {
-      // Make a deep copy so we don't modify the original array passed in
-      const copy = history.map(h => ({ ...h }));
-
-      // Strategy 1: Remove image data (imageUrl) from older entries first
-      for (let i = copy.length - 1; i >= 0; i--) {
-        if (copy[i].imageUrl && copy[i].imageUrl.startsWith('data:')) {
-          copy[i].imageUrl = ''; // drop base64 data
-        }
+    // Remove large base64 data to save space
+    const compact = trimmed.map((item) => {
+      const cleanItem = { ...item };
+      if (cleanItem.imageUrl && cleanItem.imageUrl.startsWith("data:")) {
+        cleanItem.imageUrl = ""; // remove base64 data
       }
+      return cleanItem;
+    });
 
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
-      console.info('Saved history after stripping image data from items.');
-      return;
-    } catch (err2) {
-      console.warn('Failed to save after stripping images, trying to trim length', err2);
-    }
+    // Try saving compacted version
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
+    return;
+  } catch (err: any) {
+    console.warn("localStorage full, attempting recovery...", err);
 
     try {
-      // Strategy 2: Trim to MAX_HISTORY_ITEMS and also strip images
-      const trimmed = history.slice(0, MAX_HISTORY_ITEMS).map(h => ({ ...h, imageUrl: '' }));
+      // Fallback: Try to clear space and retry
+      localStorage.removeItem(STORAGE_KEY);
+      const trimmed = history
+        .slice(-MAX_HISTORY_ITEMS)
+        .map((h) => ({ ...h, imageUrl: "" }));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
-      console.info(`Saved trimmed history (max ${MAX_HISTORY_ITEMS}) after quota issues.`);
-      return;
-    } catch (err3) {
-      console.error('Failed to save trimmed history to localStorage', err3);
-      // Final fallback: remove the key entirely to avoid repeated errors
+      console.info(`Saved trimmed history (max ${MAX_HISTORY_ITEMS}) after quota issue.`);
+    } catch (err2) {
+      console.warn("Failed to save in localStorage, falling back to sessionStorage", err2);
       try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch (cleanupErr) {
-        console.error('Failed to remove captionHistory during cleanup', cleanupErr);
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+      } catch (err3) {
+        console.error("Failed to save even in sessionStorage", err3);
       }
     }
   }
 }
 
+/**
+ * Clear all history safely.
+ */
 export function clearHistory(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
+    console.log("Caption history cleared successfully.");
   } catch (err) {
-    console.error('Failed to clear captionHistory', err);
+    console.error("Failed to clear captionHistory", err);
   }
 }
