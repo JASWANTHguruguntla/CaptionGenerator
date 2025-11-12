@@ -1,134 +1,144 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import { CaptionResult, Hashtag } from "../types";
+import { GoogleGenAI, Type } from "@google/genai";
+import { CaptionResult, Hashtag } from '../types';
 
 const getPlatformInstructions = (platform: string) => {
-  switch (platform) {
-    case "X":
-      return 'For X (Twitter), captions must be under 280 characters and concise.';
-    case "Facebook":
-      return 'For Facebook, captions should encourage engagement and sharing.';
-    case "LinkedIn":
-      return 'For LinkedIn, maintain a professional tone, add insights or questions.';
-    case "Instagram":
-    default:
-      return 'For Instagram, captions should be visual, fun, and engaging.';
-  }
-};
+    switch(platform) {
+      case 'X':
+        return 'For X (Twitter), the "title" caption must be under 280 characters and serve as a standalone tweet. The "medium" and "large" captions can be thread ideas or alternative tweets.';
+      case 'Facebook':
+        return 'For Facebook, focus on community engagement. The "medium" caption should be conversational, and the "large" caption can be a longer story that encourages comments and shares.';
+      case 'LinkedIn':
+        return 'For LinkedIn, maintain a professional tone. The "title" caption should be a strong hook. The "medium" and "large" captions should offer insights, ask professional questions, or tell a career-related story.';
+      case 'Instagram':
+      default:
+        return 'For Instagram, captions should be visually descriptive and engaging. The "large" caption can be a micro-blog post that tells a story or shares value.';
+    }
+}
 
 const generatePrompt = (tone: string, platform: string) => `
-You are a creative social media expert for ${platform}.
-Generate 3 captions for an image with a ${tone} tone.
+You are a creative social media expert specializing in ${platform}. Your task is to generate three vivid captions for the given image, with a ${tone} tone.
 
 Platform Guidelines: ${getPlatformInstructions(platform)}
 
-Each caption type:
-1. "titleCaption" – short, catchy, 1 line with emojis.
-2. "mediumCaption" – engaging 1–2 sentence caption.
-3. "largeCaption" – storytelling style, 3–4 sentences.
-
-Also provide 5–7 hashtags, each with:
-{ "tag": string, "category": "general" | "niche" | "location" | "trending" }
-
-Respond **only in valid JSON** matching the schema.
+General Instructions:
+1.  Generate three distinct captions tailored to the platform:
+    *   A "title" caption: very short, punchy, like a headline.
+    *   A "medium" caption: a standard, engaging caption.
+    *   A "large" caption: a more detailed, story-driven caption.
+2.  Incorporate relevant emojis naturally to boost engagement.
+3.  Suggest a list of 5-7 relevant hashtags. For each hashtag, provide a category from this list: ["general", "niche", "location", "trending"].
+4.  Do not assume details that are not clearly visible in the image.
+5.  Return the response in the specified JSON format.
 `;
 
 const schema = {
-  type: SchemaType.OBJECT,
+  type: Type.OBJECT,
   properties: {
-    titleCaption: { type: SchemaType.STRING },
-    mediumCaption: { type: SchemaType.STRING },
-    largeCaption: { type: SchemaType.STRING },
-    hashtags: {
-      type: SchemaType.ARRAY,
-      items: {
-        type: SchemaType.OBJECT,
-        properties: {
-          tag: { type: SchemaType.STRING },
-          category: { type: SchemaType.STRING },
-        },
-        required: ["tag", "category"],
-      },
+    titleCaption: {
+      type: Type.STRING,
+      description: 'A very short, punchy, title-like caption with emojis.'
     },
-  },
-  required: ["titleCaption", "mediumCaption", "largeCaption", "hashtags"],
-};
-
-export const generateCaptionForImage = async (
-  imageBase64: string,
-  mimeType: string,
-  tone: string,
-  platform: string
-): Promise<CaptionResult> => {
-  const API_KEY = import.meta.env.VITE_API_KEY;
-  if (!API_KEY)
-    throw new Error("VITE_API_KEY not found. Please set it in your Vercel settings.");
-
-  const ai = new GoogleGenerativeAI(API_KEY);
-
-  // 🧠 Fallback model sequence
-  const modelNames = ["gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-1.0-pro"];
-
-  const imagePart = { inlineData: { data: imageBase64, mimeType } };
-  const textPart = { text: generatePrompt(tone, platform) };
-
-  for (const modelName of modelNames) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const model = ai.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: schema,
-          },
-        });
-
-        console.log(`⚙️ Using model: ${modelName} (Attempt ${attempt})`);
-
-        const response = await model.generateContent({
-          contents: [{ role: "user", parts: [textPart, imagePart] }],
-        });
-
-        const text = response.response.text();
-        if (!text) throw new Error("Empty response from AI model.");
-
-        const parsed = JSON.parse(text);
-
-        const validatedHashtags = Array.isArray(parsed.hashtags)
-          ? parsed.hashtags
-              .filter(
-                (ht: any) =>
-                  typeof ht.tag === "string" && typeof ht.category === "string"
-              )
-              .map((ht: any) => ({
-                tag: ht.tag.replace(/\s+/g, ""),
-                category: ht.category,
-              }))
-          : [];
-
-        return {
-          titleCaption: parsed.titleCaption || "No title caption generated.",
-          mediumCaption: parsed.mediumCaption || "No medium caption generated.",
-          largeCaption: parsed.largeCaption || "No large caption generated.",
-          hashtags: validatedHashtags,
-        };
-      } catch (err: any) {
-        // Retry and fallback logic
-        if (err?.status === "UNAVAILABLE" || err?.code === 503) {
-          console.warn(
-            `🚧 Model ${modelName} overloaded. Retrying (${attempt}/3)...`
-          );
-          await new Promise((res) => setTimeout(res, 3000));
-          if (attempt === 3) {
-            console.warn(`⚠️ Switching to fallback model after ${modelName}`);
-            break;
-          }
-          continue;
-        }
-
-        if (modelName === modelNames.at(-1)) throw err;
+    mediumCaption: {
+        type: Type.STRING,
+        description: 'A standard, engaging caption (1-2 sentences) with emojis.'
+    },
+    largeCaption: {
+        type: Type.STRING,
+        description: 'A more detailed, story-driven caption (3-4 sentences) with emojis.'
+    },
+    hashtags: {
+      type: Type.ARRAY,
+      description: 'An array of 5-7 categorized hashtags.',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          tag: { type: Type.STRING, description: 'The hashtag text, without the # symbol.' },
+          category: { type: Type.STRING, description: 'The category: "general", "niche", "location", or "trending".' }
+        },
+        required: ['tag', 'category']
       }
     }
-  }
+  },
+  required: ['titleCaption', 'mediumCaption', 'largeCaption', 'hashtags']
+};
 
-  throw new Error("All models unavailable. Please try again later.");
+
+export const generateCaptionForImage = async (imageBase64: string, mimeType: string, tone: string, platform: string): Promise<CaptionResult> => {
+  const API_KEY = process.env.API_KEY;
+
+  if (!API_KEY) {
+    throw new Error("API Key is not configured. Please ensure the API_KEY environment variable is set.");
+  }
+  
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  
+  try {
+    const imagePart = {
+      inlineData: {
+        data: imageBase64,
+        mimeType,
+      },
+    };
+
+    const textPart = {
+      text: generatePrompt(tone, platform),
+    };
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [imagePart, textPart] },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: schema,
+        }
+    });
+
+    const jsonString = response.text;
+    
+    if (!jsonString) {
+      throw new Error("The AI returned an empty response. Please try again.");
+    }
+    
+    let parsedJson: any;
+    try {
+        parsedJson = JSON.parse(jsonString);
+        if (typeof parsedJson !== 'object' || parsedJson === null) {
+            throw new Error('Parsed JSON is not an object.');
+        }
+    } catch (e) {
+        console.error("Failed to parse AI response as JSON object:", e, "Response was:", jsonString);
+        throw new Error("The AI returned a response in an unexpected format. Please try again.");
+    }
+
+    // Deep validation of the response object to prevent rendering crashes.
+    const validatedHashtags = (Array.isArray(parsedJson.hashtags) ? parsedJson.hashtags : [])
+        .map((ht: any): Hashtag | null => {
+            if (typeof ht === 'object' && ht !== null && typeof ht.tag === 'string' && typeof ht.category === 'string') {
+                return { tag: ht.tag.replace(/\s+/g, ''), category: ht.category };
+            }
+            return null;
+        })
+        .filter((ht): ht is Hashtag => ht !== null);
+
+    const result: CaptionResult = {
+      titleCaption: typeof parsedJson.titleCaption === 'string' ? parsedJson.titleCaption : 'No title caption generated.',
+      mediumCaption: typeof parsedJson.mediumCaption === 'string' ? parsedJson.mediumCaption : 'No medium caption generated.',
+      largeCaption: typeof parsedJson.largeCaption === 'string' ? parsedJson.largeCaption : 'No large caption generated.',
+      hashtags: validatedHashtags,
+    };
+
+    return result;
+
+  } catch (error) {
+    console.error("Error generating caption:", error);
+    if (error instanceof Error) {
+        // Network errors (like those from ad blockers) often manifest as a `TypeError` containing "fetch".
+        // This check provides a more user-friendly message for these scenarios.
+        if (error.message.toLowerCase().includes('fetch')) {
+             throw new Error("A network request failed. This may be due to an ad blocker, firewall, or other network issue. Please check your browser extensions and network settings and try again.");
+        }
+        throw error;
+    }
+    throw new Error("An unexpected error occurred. Please check the console for more details.");
+  }
 };

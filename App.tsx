@@ -36,20 +36,38 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('captionHistory', JSON.stringify(history));
   }, [history]);
+  
+  // This effect handles cleanup of the blob URL when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (imageUrl && imageUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(imageUrl);
+      }
+    };
+  }, []); // Only runs on mount and unmount to catch the last URL.
 
   const handleImageSelect = (file: File) => {
-    setImageFile(file);
+    // Revoke the old object URL if it exists to avoid memory leaks
+    if (imageUrl && imageUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(imageUrl);
+    }
+    
     setCaptionResult(null);
     setError(null);
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setImageUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+
+    if (file && file.type.startsWith('image/')) {
+      setImageFile(file);
+      const newImageUrl = URL.createObjectURL(file);
+      setImageUrl(newImageUrl);
+    } else {
+      setError("Please select a valid image file.");
+      setImageUrl(null);
+      setImageFile(null);
+    }
   };
 
   const handleGenerateCaption = useCallback(async () => {
-    if (!imageFile || !imageUrl) {
+    if (!imageFile) {
       setError("Please select an image first.");
       return;
     }
@@ -60,16 +78,23 @@ const App: React.FC = () => {
     try {
       const base64Image = await fileToBase64(imageFile);
       const result = await generateCaptionForImage(base64Image, imageFile.type, tone, platform);
+      
+      // Reconstruct the data URL for history, as blob URLs are temporary.
+      const historyImageUrl = `data:${imageFile.type};base64,${base64Image}`;
+      
       setCaptionResult(result);
-      setHistory(prevHistory => [{ id: new Date().toISOString(), imageUrl, result }, ...prevHistory]);
+      setHistory(prevHistory => [{ id: new Date().toISOString(), imageUrl: historyImageUrl, result }, ...prevHistory]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unknown error occurred.");
     } finally {
       setIsLoading(false);
     }
-  }, [imageFile, imageUrl, tone, platform]);
+  }, [imageFile, tone, platform]);
   
   const handleReset = () => {
+    if (imageUrl && imageUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(imageUrl);
+    }
     setImageFile(null);
     setImageUrl(null);
     setCaptionResult(null);
@@ -77,9 +102,12 @@ const App: React.FC = () => {
   };
 
   const handleSelectHistoryItem = (item: HistoryItem) => {
+    if (imageUrl && imageUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(imageUrl);
+    }
     setImageUrl(item.imageUrl);
     setCaptionResult(item.result);
-    setImageFile(null); 
+    setImageFile(null); // Can't regenerate from history item, so disable button
     setIsHistoryOpen(false);
   };
 
@@ -87,8 +115,9 @@ const App: React.FC = () => {
     setHistory([]);
   };
 
-  const buttonText = isLoading ? 'Generating...' : (captionResult ? 'Regenerate Captions' : 'Generate Captions');
-  const showRegenerateIcon = !isLoading && !!captionResult;
+  const canGenerate = !!imageFile;
+  const buttonText = isLoading ? 'Generating...' : (captionResult && canGenerate ? 'Regenerate Captions' : 'Generate Captions');
+  const showRegenerateIcon = !isLoading && !!captionResult && canGenerate;
 
   return (
     <>
@@ -123,7 +152,7 @@ const App: React.FC = () => {
 
             <button
               onClick={handleGenerateCaption}
-              disabled={!imageFile || isLoading}
+              disabled={!canGenerate || isLoading}
               className="mt-6 w-full flex justify-center items-center gap-3 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500"
             >
               {isLoading && <SpinnerIcon className="w-5 h-5" />}
