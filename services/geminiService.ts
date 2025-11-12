@@ -86,27 +86,29 @@ export const generateCaptionForImage = async (imageBase64: string, mimeType: str
 
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: { parts: [imagePart, textPart] },
+        contents: [imagePart, textPart],
         config: {
           responseMimeType: "application/json",
           responseSchema: schema,
         }
     });
 
-    const jsonString = response.text;
+    const textResponse = response.text;
     
-    if (!jsonString) {
+    if (!textResponse) {
       throw new Error("The AI returned an empty response. Please try again.");
     }
     
     let parsedJson: any;
     try {
+        // The model can sometimes return the JSON wrapped in markdown code fences.
+        const jsonString = textResponse.trim().replace(/^```json/, '').replace(/```$/, '').trim();
         parsedJson = JSON.parse(jsonString);
         if (typeof parsedJson !== 'object' || parsedJson === null) {
             throw new Error('Parsed JSON is not an object.');
         }
     } catch (e) {
-        console.error("Failed to parse AI response as JSON object:", e, "Response was:", jsonString);
+        console.error("Failed to parse AI response as JSON object:", e, "Response was:", textResponse);
         throw new Error("The AI returned a response in an unexpected format. Please try again.");
     }
 
